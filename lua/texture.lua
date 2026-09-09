@@ -7,6 +7,7 @@ doomtex.colormaps = {}
 doomtex.patchCache = {}
 doomtex.textureCache = {}
 doomtex.playpal = {}
+doomtex.spriteFrames = {}
 
 // PLAYPAL
 function doomtex.loadPlaypal(data)
@@ -120,6 +121,89 @@ function doomtex.loadTextures(data)
     end
 end
 
+// sprites
+function doomtex.initSprites()
+    if not doomtex.wad or not doomtex.wad.entries then
+        return
+    end
+
+    for i = 1, doomtex.wad.numlumps do
+        local lump = doomtex.wad.entries[i]
+        local name = lump.name
+
+        if name then
+            name = name:gsub("%z", ""):gsub("%s+$", ""):upper()
+
+            if #name == 6 or #name == 8 then
+                local sprite = name:sub(1, 4)
+                local frame1 = name:sub(5, 5)
+                local rot1 = name:sub(6, 6)
+
+                if frame1:match("^[A-Z]$") and rot1:match("^[0-8]$") then
+                    local frames = doomtex.spriteFrames[sprite]
+
+                    if not frames then
+                        frames = {}
+                        doomtex.spriteFrames[sprite] = frames
+                    end
+
+                    local frameIndex = string.byte(frame1) - string.byte("A")
+                    local frame = frames[frameIndex]
+
+                    if not frame then
+                        frame =
+                        {
+                            rotate = false,
+                            lump = {},
+                            flip = {}
+                        }
+
+                        frames[frameIndex] = frame
+                    end
+
+                    if rot1 == "0" and #name == 6 then
+                        frame.rotate = false
+                        frame.lump[0] = i
+                        frame.flip[0] = false
+                    elseif rot1 != "0" then
+                        local rotation = string.byte(rot1) - string.byte("1")
+
+                        frame.rotate = true
+                        frame.lump[rotation] = i
+                        frame.flip[rotation] = false
+
+                        if #name == 8 then
+                            local frame2 = name:sub(7, 7)
+                            local rot2 = name:sub(8, 8)
+
+                            if frame2:match("^[A-Z]$") and rot2:match("^[1-8]$") then
+                                local rotation2 = string.byte(rot2) - string.byte("1")
+                                local frameIndex2 = string.byte(frame2) - string.byte("A")
+                                local frame2data = frames[frameIndex2]
+
+                                if not frame2data then
+                                    frame2data =
+                                    {
+                                        rotate = false,
+                                        lump = {},
+                                        flip = {}
+                                    }
+
+                                    frames[frameIndex2] = frame2data
+                                end
+
+                                frame2data.rotate = true
+                                frame2data.lump[rotation2] = i
+                                frame2data.flip[rotation2] = true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
 // i guess this is like R_InitData or whatever its called
 function doomtex.load(wadfile)
     doomtex.wad = wadfile
@@ -128,6 +212,8 @@ function doomtex.load(wadfile)
     doomtex.colormaps = {}
     doomtex.patchCache = {}
     doomtex.textureCache = {}
+    doomtex.playpal = {}
+    doomtex.spriteFrames = {}
 
     if not wadfile then return end
 
@@ -137,6 +223,7 @@ function doomtex.load(wadfile)
     doomtex.loadColormap(doom.lump(wadfile, "COLORMAP", 1))
     doomtex.loadPlaypal(doom.lump(wadfile, "PLAYPAL", 1))
     doomtex.buildPalette()
+    doomtex.initSprites()
 end
 
 function doomtex.patch(name)
@@ -224,4 +311,68 @@ function doomtex.build(name)
 
     doomtex.textureCache[name] = output
     return output
+end
+
+// returns the patch (and flip status) of a sprite string, its frame and rotation
+function doomtex.sprite(sprite, frame, rotation)
+    if not doomtex.spriteFrames then
+        return nil
+    end
+
+    if not sprite then
+        return nil
+    end
+
+    sprite = sprite:upper()
+
+    if sprite:sub(1, 4) == "SPR_" then
+        sprite = sprite:sub(5)
+    end
+
+    sprite = sprite:sub(1, 4)
+
+    frame = $ & 15
+    rotation = $ & 7
+
+    local spriteTable = doomtex.spriteFrames[sprite]
+
+    if not spriteTable then
+        print(string.format("SPRITE: no table for %s", sprite))
+        return nil
+    end
+
+    local frameData = spriteTable[frame]
+
+    if not frameData then
+        print(string.format("SPRITE: no frame %d for sprite %s", frame, sprite))
+        return nil
+    end
+
+    local lumpnum = frameData.lump[rotation]
+
+    if not lumpnum then
+        lumpnum = frameData.lump[0]
+
+        if not lumpnum then
+            return nil
+        end
+    end
+
+    local lump = doomtex.wad.entries[lumpnum]
+
+    if not lump then
+        return nil
+    end
+
+    local patch = doomtex.patch(lump.name:gsub("%z", ""):gsub("%s+$", ""):upper())
+
+    if not patch then
+        return nil
+    end
+
+    return
+    {
+        patch = patch,
+        flip = frameData.flip[rotation] or false
+    }
 end

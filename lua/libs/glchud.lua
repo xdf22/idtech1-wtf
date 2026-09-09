@@ -496,3 +496,36 @@ end
 function gl.drawFlatPolygon3D(vertices, z, texture, lightlevel)
     gl.triangleFan(vertices, gl.drawFlatTriangle3D, z, texture, lightlevel)
 end
+
+// billboard sprite
+function gl.drawBillboard3D(x, y, z, width, height, texture, flip)
+    if not texture then
+        return
+    end
+
+    local dx = FixedMul(width / 2, cos(gl.cam.yaw))
+    local dy = FixedMul(width / 2, sin(gl.cam.yaw))
+
+    local x1 = x - dx
+    local y1 = y - dy
+
+    local x2 = x + dx
+    local y2 = y + dy
+
+    local u1 = 0
+    local u2 = texture.width
+
+    // flip vertically
+    if flip then
+        u1 = texture.width
+        u2 = 0
+    end
+
+    gl.drawTexturedQuad3D(
+        {x = x1, y = y1, z = z},
+        {x = x2, y = y2, z = z},
+        {x = x2, y = y2, z = z + height},
+        {x = x1, y = y1, z = z + height},
+        u1, u2, texture.height, 0, texture
+    )
+end

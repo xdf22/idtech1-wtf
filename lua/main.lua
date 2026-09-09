@@ -39,6 +39,8 @@ function doom.enterMap(mapname, v)
     gl.cam.yaw = FixedAngle(start.angle * FU)
     gl.cam.pitch = 0
 
+    doom_mobj.spawnMap(map)
+
     // todo: DO NOT USE CONSOLEPLAYER
     doom.startGameWipe(consoleplayer)
 
@@ -50,6 +52,9 @@ function doom.renderGame(player)
     gl.updateCamera()
 
     doomrenderer.render(map)
+
+    // draw every spawned mobj
+    doom_mobj.drawAll()
 
     doom.drawStatusBar()
 end
