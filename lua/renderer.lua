@@ -380,15 +380,6 @@ function doomrenderer.flat(map, index, ceiling)
     gl.drawFlatPolygon3D(cached.polygon, z, texture, sector.lightlevel)
 end
 
-// floor and ceiling
-function doomrenderer.floor(map, index)
-    doomrenderer.flat(map, index, false)
-end
-
-function doomrenderer.ceiling(map, index)
-    doomrenderer.flat(map, index, true)
-end
-
 // render a subsector
 function doomrenderer.subsector(map, index)
     local sub = map.subsectors[index]
@@ -398,6 +389,7 @@ function doomrenderer.subsector(map, index)
         return
     end
 
+    // floor and ceiling
     doomrenderer.flat(map, index, false)
     doomrenderer.flat(map, index, true)
 

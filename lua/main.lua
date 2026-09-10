@@ -72,6 +72,11 @@ addHook("HUD", function(v, player)
 		end
 	end
 
+    // black border
+    if v.width() > 320 and v.height() > 200 then
+        v.drawFill(-1, -1, 322, 202, 31)
+    end
+
     gl.setFramebuffer(framebuffer)
     gl.clear(0)
 

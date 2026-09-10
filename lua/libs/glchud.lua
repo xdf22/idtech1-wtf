@@ -42,6 +42,7 @@ function gl.setFramebuffer(framebuffer)
     gl.fovY = (framebuffer.width / 2) * FU
 
     gl.viewBottom = framebuffer.height - 24 / (200 / framebuffer.height)
+    gl.projection = gl.centerX * FU
 
     if not gl.depthbuffer or gl.depthbuffer.width != framebuffer.width or gl.depthbuffer.height != framebuffer.height then
         gl.depthbuffer =
@@ -225,27 +226,22 @@ function gl.drawTriangle(x1, y1, x2, y2, x3, y3, color)
 end
 
 // big function
-// todo: cleanup and optimize?
-function gl.rasterTriangle(x1, y1, z1, x2, y2, z2, x3, y3, z3, data, pixelFunc)
-    local framebuffer = gl.framebuffer
+// todo: optimize even more
+function gl.rasterTriangle(x1,y1,z1,x2,y2,z2,x3,y3,z3,data,pixelFunc)
+	local fb=gl.framebuffer
+	if not fb then return end
 
-    if not framebuffer then
-        return
-    end
+	local width=fb.width
+	local height=fb.height
+	local depthValues=gl.depthbuffer.values
+	local pixels=fb.pixels
 
-    local minX = max(min(x1,min(x2,x3)),0)
-    local maxX = min(max(x1,max(x2,x3)),framebuffer.width-1)
+	local minX = max(min(x1,min(x2,x3)),0)
+	local maxX = min(max(x1,max(x2,x3)),width-1)
+	local minY = max(min(y1,min(y2,y3)),0)
+	local maxY = min(max(y1,max(y2,y3)), gl.viewBottom-1)
 
-    local minY = max(min(y1,min(y2,y3)),0)
-    local maxY = min(max(y1,max(y2,y3)),framebuffer.height-1)
-
-    if maxY >= gl.viewBottom then
-        maxY = gl.viewBottom-1
-    end
-
-    if minX > maxX or minY > maxY then
-        return
-    end
+	if minX > maxX or minY > maxY then return end
 
     local area = (x2-x1)*(y3-y1) - (y2-y1)*(x3-x1)
 
@@ -281,91 +277,171 @@ function gl.rasterTriangle(x1, y1, z1, x2, y2, z2, x3, y3, z3, data, pixelFunc)
         w3dy=-$
     end
 
-    local d1 = doom.fixedDiv(FU,z1)
-    local d2 = doom.fixedDiv(FU,z2)
-    local d3 = doom.fixedDiv(FU,z3)
+	local d1 = doom.fixedDiv(FU,z1)
+	local d2 = doom.fixedDiv(FU,z2)
+	local d3 = doom.fixedDiv(FU,z3)
 
+	local depth = doom.fixedDiv(w1*d1+w2*d2+w3*d3, area)
 
-    local depth = doom.fixedDiv(w1*d1+w2*d2+w3*d3, area)
+	local depthDX = doom.fixedDiv(w1dx*d1+w2dx*d2+w3dx*d3, area)
+	local depthDY = doom.fixedDiv(w1dy*d1+w2dy*d2+w3dy*d3, area)
 
-    local depthDX = doom.fixedDiv(w1dx*d1+w2dx*d2+w3dx*d3, area)
-    local depthDY = doom.fixedDiv(w1dy*d1+w2dy*d2+w3dy*d3, area)
+	// 0 = flat
+	// 1 = textured
+	// 2 = generic
+	local mode=0
+	if data then
+		mode=(data.texture and data.u and data.v) and 1 or 2
+	end
 
-    local interp = {}
+	local uCurrent,uStepX,uStepY
+	local vCurrent,vStepX,vStepY
+	local texture,texturePixels,textureWidth
+	local useLight,startmap,projection,colormaps
+	local interp
 
-    if data then
-        for name,values in pairs(data) do
-            local a = doom.fixedMul(values[1],d1)
-            local b = doom.fixedMul(values[2],d2)
-            local c = doom.fixedMul(values[3],d3)
+	if mode == 1 then
+		texture = data.texture
+		texturePixels = texture.pixels
+		textureWidth = texture.width
 
-            interp[name] =
+		local u1 = doom.fixedMul(data.u[1], d1)
+		local u2 = doom.fixedMul(data.u[2], d2)
+		local u3 = doom.fixedMul(data.u[3], d3)
+
+		local v1 = doom.fixedMul(data.v[1], d1)
+		local v2 = doom.fixedMul(data.v[2], d2)
+		local v3 = doom.fixedMul(data.v[3], d3)
+
+		uCurrent = doom.fixedDiv(w1*u1+w2*u2+w3*u3, area)
+		uStepX = doom.fixedDiv(w1dx*u1+w2dx*u2+w3dx*u3, area)
+		uStepY = doom.fixedDiv(w1dy*u1+w2dy*u2+w3dy*u3, area)
+
+		vCurrent = doom.fixedDiv(w1*v1+w2*v2+w3*v3, area)
+		vStepX = doom.fixedDiv(w1dx*v1+w2dx*v2+w3dx*v3, area)
+		vStepY = doom.fixedDiv(w1dy*v1+w2dy*v2+w3dy*v3, area)
+
+		useLight = data.lightlevel and doomtex.colormaps and #doomtex.colormaps>0
+
+		if useLight then
+			local light = max(0,min(data.lightlevel>>4,15))
+			startmap=(15-light)*4
+			projection = gl.projection
+			colormaps = doomtex.colormaps
+		end
+	elseif mode==2 then
+		interp={}
+
+		for name,values in pairs(data) do
+			local a = doom.fixedMul(values[1],d1)
+			local b = doom.fixedMul(values[2],d2)
+			local c = doom.fixedMul(values[3],d3)
+
+			interp[name] =
             {
-                current = doom.fixedDiv(w1*a+w2*b+w3*c, area),
-                stepX = doom.fixedDiv(w1dx*a+w2dx*b+w3dx*c, area),
-                stepY = doom.fixedDiv(w1dy*a+w2dy*b+w3dy*c, area)
-            }
-        end
-    end
+				current = doom.fixedDiv(w1*a+w2*b+w3*c,area),
+				stepX = doom.fixedDiv(w1dx*a+w2dx*b+w3dx*c,area),
+				stepY = doom.fixedDiv(w1dy*a+w2dy*b+w3*c,area)
+			}
+		end
+	end
 
-    local depthValues = gl.depthbuffer.values
-    local pixels = framebuffer.pixels
-    local width = framebuffer.width
+	for y=minY,maxY do
+		local rw1 = w1
+		local rw2 = w2
+		local rw3 = w3
+		local currentDepth=depth
+		local currentU=uCurrent
+		local currentV=vCurrent
+		local rowInterp
 
-    local startW1 = w1
-    local startW2 = w2
-    local startW3 = w3
+		if mode == 2 then
+			rowInterp = {}
+			for name,value in pairs(interp) do
+				rowInterp[name] = value.current
+			end
+		end
 
-    for y=minY,maxY do
-        local rw1=startW1
-        local rw2=startW2
-        local rw3=startW3
-        local currentDepth=depth
+		local index = y*width+minX+1
 
-        local rowInterp={}
+		for x=minX,maxX do
+			if rw1>=0 and rw2>=0 and rw3>=0 and currentDepth>depthValues[index] then
+				if mode == 1 then
+					local inverseDepth = doom.fixedDiv(FU, currentDepth)
+					local u = doom.fixedMul(currentU, inverseDepth)
+					local v = doom.fixedMul(currentV, inverseDepth)
 
-        for k,v in pairs(interp) do
-            rowInterp[k]=v.current
-        end
+					local texU = doom.fixedInt(u) % textureWidth
+					local texV = doom.fixedInt(v) % texture.height
 
-        local index = y*width+minX+1
+					if texU <0 then texU=$+textureWidth end
+					if texV <0 then texV=$+texture.height end
 
-        for x=minX,maxX do
-            if rw1>=0 and rw2>=0 and rw3>=0 then
-                if currentDepth > depthValues[index] then
-                    local values={}
+					local color=texturePixels[texV*textureWidth+texU+1]
 
-                    for k,v in pairs(interp) do
-                        values[k] = doom.fixedDiv(rowInterp[k], currentDepth)
-                    end
+					if color and color != -1 then
+						if useLight then
+							local scaleIndex = doom.fixedMul(projection, currentDepth)>>12
+							scaleIndex= max(0, min(scaleIndex, 47))
 
-                    pixelFunc(index, currentDepth, values)
-                end
-            end
+							local level = startmap - (scaleIndex>>1)
+							level = max(0, min(level, 31))
 
-            rw1=$+w1dx
-            rw2=$+w2dx
-            rw3=$+w3dx
+							local colormap = colormaps[level+1]
+							if colormap then
+								color = colormap[color+1]
+							end
+						end
 
-            currentDepth = currentDepth+depthDX
+						depthValues[index] = currentDepth
+						pixels[index] = color
+					end
+				elseif mode == 0 then
+					pixelFunc(index, currentDepth)
+				else
+					local values={}
 
-            for k,v in pairs(interp) do
-                rowInterp[k]= rowInterp[k]+v.stepX
-            end
+					for name,value in pairs(interp) do
+						values[name] = doom.fixedDiv(rowInterp[name], currentDepth)
+					end
 
-            index=$+1
-        end
+					pixelFunc(index, currentDepth, values)
+				end
+			end
 
-        depth = depth+depthDY
+			rw1=$+w1dx
+			rw2=$+w2dx
+			rw3=$+w3dx
 
-        startW1=startW1+w1dy
-        startW2=startW2+w2dy
-        startW3=startW3+w3dy
+			currentDepth = $+depthDX
 
-        for k,v in pairs(interp) do
-            v.current = $+v.stepY
-        end
-    end
+			if mode==1 then
+				currentU = $+uStepX
+				currentV = $+vStepX
+			elseif mode == 2 then
+				for name,value in pairs(interp) do
+					rowInterp[name] = $+value.stepX
+				end
+			end
+
+			index=$+1
+		end
+
+		depth = $+depthDY
+
+		w1 = $+w1dy
+		w2 = $+w2dy
+		w3 = $+w3dy
+
+		if mode == 1 then
+			uCurrent = $+uStepY
+			vCurrent = $+vStepY
+		elseif mode == 2 then
+			for name,value in pairs(interp) do
+				value.current = $+value.stepY
+			end
+		end
+	end
 end
 
 function gl.drawTriangle3D(a,b,c,color)
@@ -405,70 +481,23 @@ function gl.triangleFan(vertices, func, ...)
 end
 
 function gl.drawTexturedTriangle(x1, y1, depth1, x2, y2, depth2, x3, y3, depth3, u1, v1, u2, v2, u3, v3, texture, lightlevel)
-    if not texture then
-        return
-    end
+	if not texture then
+		return
+	end
 
-    local tw = texture.width
-    local th = texture.height
+	if texture.width <= 0 or texture.height <= 0 then
+		return
+	end
 
-    if tw <= 0 or th <= 0 then
-        return
-    end
-
-    local pixels = texture.pixels
-
-    // hack
-    u1 = $ * FU
-    v1 = $ * FU
-    u2 = $ * FU
-    v2 = $ * FU
-    u3 = $ * FU
-    v3 = $ * FU
-
-    gl.rasterTriangle(x1,y1,depth1, x2,y2,depth2, x3,y3,depth3, {u = {u1,u2,u3}, v = {v1,v2,v3}},
-        function(index,depth,uv)
-            local u = doom.fixedInt(uv.u)
-            local v = doom.fixedInt(uv.v)
-
-            u = $ % tw
-            v = $ % th
-
-            if u < 0 then
-                u = $ + tw
-            end
-
-            if v < 0 then
-                v = $ + th
-            end
-
-            local color = pixels[v * tw + u + 1]
-
-            if color and color != -1 then
-                // light level stuff
-                if lightlevel and doomtex.colormaps and #doomtex.colormaps > 0 and color >= 0 and color < 256 then
-                    local light = lightlevel >> 4
-                    if light < 0 then light = 0 elseif light >= 16 then light = 15 end
-
-                    local startmap = (15 - light) * 4
-                    local distance = doom.fixedDiv(FU, depth)
-                    local projection = gl.centerX * FU
-                    local rwScale = doom.fixedDiv(projection, distance)
-                    local scaleIndex = rwScale >> 12
-                    if scaleIndex < 0 then scaleIndex = 0 elseif scaleIndex >= 48 then scaleIndex = 47 end
-
-                    local level = startmap - scaleIndex * gl.framebuffer.width / gl.framebuffer.width / 2
-                    if level < 0 then level = 0 elseif level >= 32 then level = 31 end
-
-                    local colormap = doomtex.colormaps[level + 1]
-                    if colormap then color = colormap[color + 1] end
-                end
-
-                gl.depthbuffer.values[index] = depth
-                gl.framebuffer.pixels[index] = color
-            end
-        end
-    )
+	gl.rasterTriangle(x1, y1, depth1, x2, y2, depth2, x3, y3, depth3,
+		{
+			u = {u1 * FU, u2 * FU, u3 * FU},
+			v = {v1 * FU, v2 * FU, v3 * FU},
+			texture = texture,
+			lightlevel = lightlevel
+		},
+		nil
+	)
 end
 
 function gl.drawTexturedTriangle3D(a, b, c, u1, v1, u2, v2, u3, v3, texture, lightlevel)
