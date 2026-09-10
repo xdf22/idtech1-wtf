@@ -107,8 +107,6 @@ addHook("HUD", function(v, player)
             doommenu.lastButtons = player.cmd.buttons
             doommenu.lastForward = player.cmd.forwardmove
             doommenu.lastSide = player.cmd.sidemove
-
-            return
         end
     end
 
