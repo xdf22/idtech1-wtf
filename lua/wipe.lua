@@ -13,7 +13,7 @@ doomwipe.width = 0
 doomwipe.height = 0
 
 // cant use random key in hud smh
-doomwipe.randomSeed = 12345
+doomwipe.randomSeed = P_RandomRange(0, 99999)
 
 function doomwipe.random(max)
     doomwipe.randomSeed =
